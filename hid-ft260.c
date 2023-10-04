@@ -15,11 +15,8 @@
 #include <linux/usb.h>
 #include <linux/gpio/driver.h>
 
-#ifdef DEBUG
 static int ft260_debug = 1;
-#else
-static int ft260_debug;
-#endif
+
 module_param_named(debug, ft260_debug, int, 0600);
 MODULE_PARM_DESC(debug, "Toggle FT260 debugging messages");
 
@@ -318,6 +315,13 @@ struct ft260_i2c_input_report {
 	u8 report;		/* FT260_I2C_REPORT */
 	u8 length;		/* data payload length */
 	u8 data[2];		/* data payload */
+} __packed;
+
+struct ft260_set_enable_interrupt_report {
+	u8 report;		/* FT260_I2C_REPORT */
+	u8 request;		/* Enable Interrupt/Wake up */
+	u8 enable_wakeup_int;		/* 0 GPIO 
+						   		1 Wakeup/Interupt	*/
 } __packed;
 
 static const struct hid_device_id ft260_devices[] = {
@@ -1267,6 +1271,11 @@ FT260_BYTE_ATTR_STORE(gpiog_func, ft260_set_gpiog_func_report,
 		      FT260_SELECT_GPIOG_FUNC, ft260_gpio_en_update);
 static DEVICE_ATTR_RW(gpiog_func);
 
+FT260_SSTAT_ATTR_SHOW(enable_wakeup_int);
+FT260_BYTE_ATTR_STORE(enable_wakeup_int, ft260_set_enable_interrupt_report,
+		      FT260_ENABLE_INTERRUPT, ft260_attr_dummy_func);
+static DEVICE_ATTR_RW(enable_wakeup_int);
+
 FT260_SSTAT_ATTR_SHOW(power_saving_en);
 static DEVICE_ATTR_RO(power_saving_en);
 
@@ -1311,6 +1320,7 @@ static const struct attribute_group ft260_attr_group = {
 		  &dev_attr_hid_over_i2c_en.attr,
 		  &dev_attr_power_saving_en.attr,
 		  &dev_attr_i2c_enable.attr,
+		  &dev_attr_enable_wakeup_int.attr,
 		  &dev_attr_gpio2_func.attr,
 		  &dev_attr_gpioa_func.attr,
 		  &dev_attr_gpiog_func.attr,
@@ -1330,8 +1340,8 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct gpio_chip *chip;
 	int ret;
 
-	if (!hid_is_usb(hdev))
-		return -EINVAL;
+	//if (!hid_is_usb(hdev))
+	//	return -EINVAL;
 
 	dev = devm_kzalloc(&hdev->dev, sizeof(*dev), GFP_KERNEL);
 	if (!dev)
