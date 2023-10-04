@@ -20,12 +20,17 @@
 #include <linux/minmax.h>
 #include <asm/unaligned.h>
 #include <linux/gpio/driver.h>
+#include <linux/uio_driver.h>
+
+
+#define DEBUG
 
 #ifdef DEBUG
 static int ft260_debug = 1;
 #else
 static int ft260_debug;
 #endif
+
 module_param_named(debug, ft260_debug, int, 0600);
 MODULE_PARM_DESC(debug, "Toggle FT260 debugging messages");
 
@@ -83,6 +88,8 @@ enum {
 	FT260_MODE_UART			= 0x02,
 	FT260_MODE_BOTH			= 0x03,
 };
+
+
 
 /* Control pipe */
 enum {
@@ -224,6 +231,26 @@ enum {
 					   FT260_GPIO_UART_DTR_DSR),
 	FT260_GPIO_UART_MODE_3_CLR	= (FT260_GPIO_UART_RX_TX),
 	FT260_GPIO_UART_MODES		= (5),
+};
+
+enum {
+	FT260_WAKEUP_INTERUP_DISABLE = 0,
+	FT260_WAKEUP_INTERUP_ENABLE = 1,
+};
+
+/* Interrupt trigger conditions */
+enum {
+	FT260_INTR_COND_RISING_EDGE = 0,
+	FT260_INTR_COND_LEVEL_HIGH = 1,
+	FT260_INTR_COND_FALLING_EDGE = 2,
+	FT260_INTR_COND_LEVEL_LOW = 3,
+};
+
+/* Interupt level duration, when trigger cond is level high/low */
+enum {
+	FT260_INTR_COND_DELAY_1MS = 1,
+	FT260_INTR_COND_DELAY_5MS = 2,
+	FT260_INTR_COND_DELAY_30MS = 3,
 };
 
 #define FT260_SET_REQUEST_VALUE(report_id) ((FT260_FEATURE << 8) | (report_id))
@@ -430,6 +457,21 @@ enum {
 #define UART_COUNT_MAX (4) /* Number of supported UARTs */
 #define XMIT_FIFO_SIZE (PAGE_SIZE)
 
+struct ft260_set_enable_interrupt_report {
+	u8 report;		/* FT260_I2C_REPORT */
+	u8 request;		/* Enable Interrupt/Wake up */
+	u8 enable_wakeup_int;		/* 0 GPIO - 1 Wakeup/Interupt */
+} __packed;
+
+struct ft260_set_interrupt_trigger_cond_report {
+	u8 report;		/* FT260_SYSTEM_SETTINGS */
+	u8 request;		/* Set Interrupt Trigger Condition */
+	u16 intr_cond;		/* First byte = trigger condition */
+				/* 0 - rising e, 1 - lvl high, 2 - falling e, 3 - lvl low */
+				/* Second byte = duration for level high/low */
+				/* 1 - 1ms, 2 - 5ms, 3 - 30ms */
+} __packed;
+
 static const struct hid_device_id ft260_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_FUTURE_TECHNOLOGY,
 			 USB_DEVICE_ID_FT260) },
@@ -466,6 +508,7 @@ struct ft260_device {
 	struct gpio_chip *gc;
 	struct ft260_gpio_state gpio;
 	u16 gpio_uart_mode[FT260_GPIO_UART_MODES];
+	struct uio_info uio;
 };
 
 static int ft260_hid_feature_report_get(struct hid_device *hdev,
@@ -1314,6 +1357,30 @@ static int ft260_get_system_config(struct hid_device *hdev,
 	return 0;
 }
 
+static void ft260_attr_enable_wakeup_int(struct hid_device *hdev, u8 req, u16 value)
+{
+	struct ft260_device *dev = hid_get_drvdata(hdev);
+
+	if (!dev) {
+		hid_err(hdev, "Failed to get device data\n");
+		return;
+	}
+
+	if (value == FT260_WAKEUP_INTERUP_DISABLE) {
+		dev->gpio_en |= FT260_GPIO_WAKEUP;
+		ft260_dbg(
+			"Wakeup/Interupt disable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	} else  {
+		dev->gpio_en &= ~FT260_GPIO_WAKEUP;
+		ft260_dbg(
+			"Wakeup/Interupt enable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+}
+
 static int ft260_get_interface_type(struct ft260_device *dev,
 				    struct ft260_get_system_status_report *cfg)
 
@@ -1337,6 +1404,7 @@ static int ft260_get_interface_type(struct ft260_device *dev,
 	ft260_dbg("gpioA_func: 0x%02x\n", cfg->gpioa_func);
 	ft260_dbg("gpioG_func: 0x%02x\n", cfg->gpiog_func);
 	ft260_dbg("wakeup_int: 0x%02x\n", cfg->enable_wakeup_int);
+	ft260_dbg("intr_cond: 0x%02x\n",  cfg->intr_cond);
 
 	dev->power_saving_en = cfg->power_saving_en;
 
@@ -1473,6 +1541,16 @@ FT260_BYTE_ATTR_STORE(gpiog_func, ft260_set_gpiog_func_report,
 		      FT260_SELECT_GPIOG_FUNC, ft260_gpio_en_update);
 static DEVICE_ATTR_RW(gpiog_func);
 
+FT260_SSTAT_ATTR_SHOW(enable_wakeup_int);
+FT260_BYTE_ATTR_STORE(enable_wakeup_int, ft260_set_enable_interrupt_report,
+		      FT260_ENABLE_INTERRUPT, ft260_attr_enable_wakeup_int);
+static DEVICE_ATTR_RW(enable_wakeup_int);
+
+FT260_SSTAT_ATTR_SHOW(intr_cond);
+FT260_WORD_ATTR_STORE(intr_cond, ft260_set_interrupt_trigger_cond_report,
+			  FT260_SET_INTERRUPT_TRIGGER, ft260_attr_dummy_func);
+static DEVICE_ATTR_RW(intr_cond);
+
 FT260_SSTAT_ATTR_SHOW(power_saving_en);
 static DEVICE_ATTR_RO(power_saving_en);
 
@@ -1513,6 +1591,14 @@ static ssize_t i2c_reset_store(struct device *kdev,
 }
 static DEVICE_ATTR_WO(i2c_reset);
 
+static ssize_t hid_phys_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct hid_device *hdev = to_hid_device(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%s\n", hdev->phys);
+}
+static DEVICE_ATTR_RO(hid_phys);
+
 static const struct attribute_group ft260_attr_group = {
 	.attrs = (struct attribute *[]) {
 		  &dev_attr_chip_mode.attr,
@@ -1521,6 +1607,8 @@ static const struct attribute_group ft260_attr_group = {
 		  &dev_attr_hid_over_i2c_en.attr,
 		  &dev_attr_power_saving_en.attr,
 		  &dev_attr_i2c_enable.attr,
+		  &dev_attr_enable_wakeup_int.attr,
+		  &dev_attr_intr_cond.attr,
 		  &dev_attr_gpio2_func.attr,
 		  &dev_attr_gpioa_func.attr,
 		  &dev_attr_gpiog_func.attr,
@@ -1529,6 +1617,7 @@ static const struct attribute_group ft260_attr_group = {
 		  &dev_attr_clock_ctl.attr,
 		  &dev_attr_i2c_reset.attr,
 		  &dev_attr_clock.attr,
+		  &dev_attr_hid_phys.attr,
 		  NULL
 	}
 };
@@ -2107,6 +2196,16 @@ static int ft260_uart_probe(struct ft260_device *dev,
 	struct device *devt;
 	int ret;
 
+	dev->uio.name = hdev->phys;
+	dev->uio.version = "0.0.1";
+	dev->uio.irq = UIO_IRQ_CUSTOM;
+
+	ret = uio_register_device(&hdev->dev, &dev->uio);
+	if (ret) {
+		hid_err(hdev, "failed to register uio\n");
+		return -1;
+	}
+
 	INIT_WORK(&dev->wakeup_work, ft260_uart_do_wakeup);
 	ft260_uart_wakeup_workaraund_enable(dev, true);
 	/* Work not started at this point */
@@ -2257,6 +2356,7 @@ static void ft260_remove(struct hid_device *hdev)
 		tty_port_unregister_device(&dev->port, ft260_tty_driver,
 					   dev->index);
 		ft260_uart_port_remove(dev);
+		uio_unregister_device(&dev->uio);
 		/* dev is still needed, so we will free it in _destroy func */
 		if (dev->iface_id == 0)
 			sysfs_remove_group(&hdev->dev.kobj, &ft260_attr_group);
@@ -2304,8 +2404,10 @@ static int ft260_raw_event(struct hid_device *hdev, struct hid_report *report,
 	} else if (xfer->report >= FT260_UART_REPORT_MIN &&
 		   xfer->report <= FT260_UART_REPORT_MAX) {
 		return ft260_uart_receive_chars(dev, xfer->data, xfer->length);
-	} else if (xfer->report == FT260_UART_INTERRUPT_STATUS) {
-		return 0;
+	} else if (xfer->report >= FT260_UART_INTERRUPT_STATUS) {
+		ft260_dbg("uart interrupt: rep %#02x len %d\n", xfer->report,
+			  xfer->length);
+		uio_event_notify(&dev->uio);
 	}
 	hid_err(hdev, "unhandled report %#02x\n", xfer->report);
 
