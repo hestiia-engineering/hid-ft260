@@ -256,6 +256,19 @@ struct ft260_set_uart_mode_report {
 				/* 3 - XON_XOFF, 4 - No flow control */
 } __packed;
 
+struct ft260_set_enable_interrupt_report {
+	u8 report;		/* FT260_I2C_REPORT */
+	u8 request;		/* Enable Interrupt/Wake up */
+	u8 enable_wakeup_int;		/* 0 GPIO 
+						   		1 Wakeup/Interupt	*/
+} __packed;
+
+struct ft260_set_uart_enable_dcd_ri_report {
+	u8 report;		/* FT260_SYSTEM_SETTINGS */
+	u8 request;		/* FT260_SET_UART_MODE */
+	u8 enable_uart_dc_ri;		/* 0 - OFF; 1 - Enabled */
+} __packed;
+
 struct ft260_set_i2c_reset_report {
 	u8 report;		/* FT260_SYSTEM_SETTINGS */
 	u8 request;		/* FT260_SET_I2C_RESET */
@@ -315,13 +328,6 @@ struct ft260_i2c_input_report {
 	u8 report;		/* FT260_I2C_REPORT */
 	u8 length;		/* data payload length */
 	u8 data[2];		/* data payload */
-} __packed;
-
-struct ft260_set_enable_interrupt_report {
-	u8 report;		/* FT260_I2C_REPORT */
-	u8 request;		/* Enable Interrupt/Wake up */
-	u8 enable_wakeup_int;		/* 0 GPIO 
-						   		1 Wakeup/Interupt	*/
 } __packed;
 
 static const struct hid_device_id ft260_devices[] = {
@@ -1187,6 +1193,26 @@ static void ft260_attr_dummy_func(struct hid_device *hdev, u8 req, u16 value)
 {
 }
 
+static void ft260_attr_uart_mode(struct hid_device *hdev, u8 req, u16 value) {
+	struct ft260_device *dev = hid_get_drvdata(hdev);
+	ft260_dbg("%s : req = 0x%02x, value = 0x%04x\n", __func__, req, value);
+	if (value == 0) {
+		dev->gpio_en |= FT260_GPIO_UART_DEFAULT;
+		ft260_dbg(
+			"UART mode disable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+	else  {
+		dev->gpio_en &= ~FT260_GPIO_UART_DEFAULT;
+		ft260_dbg(
+			"UART mode enable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+}
+
+
 #define FT260_ATTR_SHOW(name, reptype, id, type, func)			       \
 	static ssize_t name##_show(struct device *kdev,			       \
 				   struct device_attribute *attr, char *buf)   \
@@ -1286,8 +1312,13 @@ static DEVICE_ATTR_RW(i2c_enable);
 
 FT260_SSTAT_ATTR_SHOW(uart_mode);
 FT260_BYTE_ATTR_STORE(uart_mode, ft260_set_uart_mode_report,
-		      FT260_SET_UART_MODE, ft260_attr_dummy_func);
+		      FT260_SET_UART_MODE, ft260_attr_uart_mode);
 static DEVICE_ATTR_RW(uart_mode);
+
+// FT260_SSTAT_ATTR_SHOW(enable_uart_dc_ri);
+// FT260_BYTE_ATTR_STORE(enable_uart_dc_ri, ft260_set_uart_enable_dcd_ri_report,
+// 		      FT260_ENABLE_UART_DCD_RI, ft260_attr_dummy_func);
+// static DEVICE_ATTR_RW(enable_uart_dc_ri);
 
 FT260_SSTAT_ATTR_SHOW(clock_ctl);
 FT260_BYTE_ATTR_STORE(clock_ctl, ft260_set_system_clock_report,
@@ -1325,6 +1356,7 @@ static const struct attribute_group ft260_attr_group = {
 		  &dev_attr_gpioa_func.attr,
 		  &dev_attr_gpiog_func.attr,
 		  &dev_attr_uart_mode.attr,
+		  //&dev_attr_enable_uart_dc_ri.attr,
 		  &dev_attr_clock_ctl.attr,
 		  &dev_attr_i2c_reset.attr,
 		  &dev_attr_clock.attr,
