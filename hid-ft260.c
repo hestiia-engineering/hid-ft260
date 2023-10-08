@@ -15,7 +15,12 @@
 #include <linux/usb.h>
 #include <linux/gpio/driver.h>
 
+
+#ifdef DEBUG
 static int ft260_debug = 1;
+#else
+static int ft260_debug;
+#endif
 
 module_param_named(debug, ft260_debug, int, 0600);
 MODULE_PARM_DESC(debug, "Toggle FT260 debugging messages");
@@ -278,12 +283,6 @@ struct ft260_set_enable_interrupt_report {
 	u8 request;		/* Enable Interrupt/Wake up */
 	u8 enable_wakeup_int;		/* 0 GPIO 
 						   		1 Wakeup/Interupt	*/
-} __packed;
-
-struct ft260_set_uart_enable_dcd_ri_report {
-	u8 report;		/* FT260_SYSTEM_SETTINGS */
-	u8 request;		/* FT260_SET_UART_MODE */
-	u8 enable_uart_dc_ri;		/* 0 - OFF; 1 - Enabled */
 } __packed;
 
 struct ft260_set_i2c_reset_report {
@@ -1433,8 +1432,8 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	struct gpio_chip *chip;
 	int ret;
 
-	//if (!hid_is_usb(hdev))
-	//	return -EINVAL;
+	if (!hid_is_usb(hdev))
+		return -EINVAL;
 
 	dev = devm_kzalloc(&hdev->dev, sizeof(*dev), GFP_KERNEL);
 	if (!dev)
