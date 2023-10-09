@@ -15,11 +15,13 @@
 #include <linux/usb.h>
 #include <linux/gpio/driver.h>
 
+
 #ifdef DEBUG
 static int ft260_debug = 1;
 #else
 static int ft260_debug;
 #endif
+
 module_param_named(debug, ft260_debug, int, 0600);
 MODULE_PARM_DESC(debug, "Toggle FT260 debugging messages");
 
@@ -187,6 +189,23 @@ enum {
 					   FT260_GPIO_UART_DCD_RI),
 };
 
+enum {
+	FT260_I2C_DISABLE = 0,
+	FT260_I2C_ENABLE = 1,
+};
+
+enum {
+	FT260_UART_MODE_OFF = 0,
+	FT260_UART_MODE_RTS_CTS = 1,
+	FT260_UART_MODE_DTR_DSR = 2,
+	FT260_UART_MODE_XON_XOFF = 3,
+};
+
+enum {
+	FT260_WAKEUP_INTERUP_DISABLE = 0,
+	FT260_WAKEUP_INTERUP_ENABLE = 1,
+};
+
 #define FT260_SET_REQUEST_VALUE(report_id) ((FT260_FEATURE << 8) | (report_id))
 
 /* Feature In reports */
@@ -257,6 +276,13 @@ struct ft260_set_uart_mode_report {
 	u8 request;		/* FT260_SET_UART_MODE */
 	u8 uart_mode;		/* 0 - OFF; 1 - RTS_CTS, 2 - DTR_DSR, */
 				/* 3 - XON_XOFF, 4 - No flow control */
+} __packed;
+
+struct ft260_set_enable_interrupt_report {
+	u8 report;		/* FT260_I2C_REPORT */
+	u8 request;		/* Enable Interrupt/Wake up */
+	u8 enable_wakeup_int;		/* 0 GPIO 
+						   		1 Wakeup/Interupt	*/
 } __packed;
 
 struct ft260_set_i2c_reset_report {
@@ -1183,6 +1209,76 @@ static void ft260_attr_dummy_func(struct hid_device *hdev, u8 req, u16 value)
 {
 }
 
+static void ft260_attr_uart_mode(struct hid_device *hdev, u8 req, u16 value) {
+	struct ft260_device *dev = hid_get_drvdata(hdev);
+	if (!dev) {
+		hid_err(hdev, "Failed to get device data\n");
+		return;
+	}
+
+	if (value == FT260_UART_MODE_OFF) {
+		dev->gpio_en |= FT260_GPIO_UART_DEFAULT;
+		ft260_dbg(
+			"UART disable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+	else  {
+		dev->gpio_en &= ~FT260_GPIO_UART_DEFAULT;
+		ft260_dbg(
+			"UART enable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+}
+
+static void ft260_attr_i2c_enable (struct hid_device *hdev, u8 req, u16 value) {
+	struct ft260_device *dev = hid_get_drvdata(hdev);
+	if (!dev) {
+		hid_err(hdev, "Failed to get device data\n");
+		return;
+	}
+
+	if (value == FT260_I2C_DISABLE) {
+		dev->gpio_en |= FT260_GPIO_I2C_DEFAULT;
+		ft260_dbg(
+			"I2C disable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+	else  {
+		dev->gpio_en &= ~FT260_GPIO_I2C_DEFAULT;
+		ft260_dbg(
+			"I2C enable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+}
+
+static void ft260_attr_enable_wakeup_int(struct hid_device *hdev, u8 req, u16 value) {
+	struct ft260_device *dev = hid_get_drvdata(hdev);
+	if (!dev) {
+		hid_err(hdev, "Failed to get device data\n");
+		return;
+	}
+
+	if (value == FT260_WAKEUP_INTERUP_DISABLE) {
+		dev->gpio_en |= FT260_GPIO_WAKEUP;
+		ft260_dbg(
+			"Wakeup/Interupt disable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+	else  {
+		dev->gpio_en &= ~FT260_GPIO_WAKEUP;
+		ft260_dbg(
+			"Wakeup/Interupt enable, GPIOs: %04x\n",
+			dev->gpio_en
+		);
+	}
+}
+
+
 #define FT260_ATTR_SHOW(name, reptype, id, type, func)			       \
 	static ssize_t name##_show(struct device *kdev,			       \
 				   struct device_attribute *attr, char *buf)   \
@@ -1267,17 +1363,22 @@ FT260_BYTE_ATTR_STORE(gpiog_func, ft260_set_gpiog_func_report,
 		      FT260_SELECT_GPIOG_FUNC, ft260_gpio_en_update);
 static DEVICE_ATTR_RW(gpiog_func);
 
+FT260_SSTAT_ATTR_SHOW(enable_wakeup_int);
+FT260_BYTE_ATTR_STORE(enable_wakeup_int, ft260_set_enable_interrupt_report,
+		      FT260_ENABLE_INTERRUPT, ft260_attr_enable_wakeup_int);
+static DEVICE_ATTR_RW(enable_wakeup_int);
+
 FT260_SSTAT_ATTR_SHOW(power_saving_en);
 static DEVICE_ATTR_RO(power_saving_en);
 
 FT260_SSTAT_ATTR_SHOW(i2c_enable);
 FT260_BYTE_ATTR_STORE(i2c_enable, ft260_set_i2c_mode_report,
-		      FT260_SET_I2C_MODE, ft260_attr_dummy_func);
+		      FT260_SET_I2C_MODE, ft260_attr_i2c_enable);
 static DEVICE_ATTR_RW(i2c_enable);
 
 FT260_SSTAT_ATTR_SHOW(uart_mode);
 FT260_BYTE_ATTR_STORE(uart_mode, ft260_set_uart_mode_report,
-		      FT260_SET_UART_MODE, ft260_attr_dummy_func);
+		      FT260_SET_UART_MODE, ft260_attr_uart_mode);
 static DEVICE_ATTR_RW(uart_mode);
 
 FT260_SSTAT_ATTR_SHOW(clock_ctl);
@@ -1311,6 +1412,7 @@ static const struct attribute_group ft260_attr_group = {
 		  &dev_attr_hid_over_i2c_en.attr,
 		  &dev_attr_power_saving_en.attr,
 		  &dev_attr_i2c_enable.attr,
+		  &dev_attr_enable_wakeup_int.attr,
 		  &dev_attr_gpio2_func.attr,
 		  &dev_attr_gpioa_func.attr,
 		  &dev_attr_gpiog_func.attr,
@@ -1418,11 +1520,23 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 			dev->gpio_en |= FT260_GPIO_I2C_DEFAULT;
 	}
 
+	if (cfg.i2c_enable == FT260_I2C_DISABLE)
+		dev->gpio_en |= FT260_GPIO_I2C_DEFAULT;
+	else
+		dev->gpio_en &= ~FT260_GPIO_I2C_DEFAULT;
+	
+	if (cfg.uart_mode == FT260_UART_MODE_OFF)
+		dev->gpio_en |= FT260_GPIO_UART_DEFAULT;
+	else
+		dev->gpio_en &= ~FT260_GPIO_UART_DEFAULT;
+
 	if (cfg.gpio2_func == FT260_MFPIN_GPIO)
 		dev->gpio_en |= FT260_GPIO_2;
 
-	if (cfg.enable_wakeup_int == FT260_MFPIN_GPIO)
+	if (cfg.enable_wakeup_int == FT260_WAKEUP_INTERUP_DISABLE)
 		dev->gpio_en |= FT260_GPIO_3;
+	else
+		dev->gpio_en &= ~FT260_GPIO_3;
 
 	if (cfg.gpioa_func == FT260_MFPIN_GPIO)
 		dev->gpio_en |= FT260_GPIO_A;
