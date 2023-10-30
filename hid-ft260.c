@@ -14,7 +14,9 @@
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/gpio/driver.h>
+#include <linux/uio_driver.h>
 
+#define DEBUG
 
 #ifdef DEBUG
 static int ft260_debug = 1;
@@ -1166,13 +1168,15 @@ static int ft260_is_interface_enabled(struct hid_device *hdev,
 	switch (cfg->chip_mode) {
 	case FT260_MODE_ALL:
 	case FT260_MODE_BOTH:
-		if (interface == 1)
+		if (interface == 1){
 			hid_info(hdev, "uart interface is not supported\n");
-		else
+			ret = 0;
+		} else
 			ret = 1;
 		break;
 	case FT260_MODE_UART:
 		hid_info(hdev, "uart interface is not supported\n");
+		ret = 0;
 		break;
 	case FT260_MODE_I2C:
 		ret = 1;
@@ -1424,58 +1428,11 @@ static const struct attribute_group ft260_attr_group = {
 	}
 };
 
-static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
-{
-	struct ft260_device *dev;
-	struct ft260_get_chip_version_report version;
-	struct ft260_get_system_status_report cfg;
-	struct gpio_chip *chip;
+static int ft260_i2c_probe(struct hid_device *hdev, struct ft260_device *dev, struct ft260_get_system_status_report const *cfg){
+	
 	int ret;
-
-	if (!hid_is_usb(hdev))
-		return -EINVAL;
-
-	dev = devm_kzalloc(&hdev->dev, sizeof(*dev), GFP_KERNEL);
-	if (!dev)
-		return -ENOMEM;
-
-	ret = hid_parse(hdev);
-	if (ret) {
-		hid_err(hdev, "failed to parse HID\n");
-		return ret;
-	}
-
-	ret = hid_hw_start(hdev, 0);
-	if (ret) {
-		hid_err(hdev, "failed to start HID HW\n");
-		return ret;
-	}
-
-	ret = hid_hw_open(hdev);
-	if (ret) {
-		hid_err(hdev, "failed to open HID HW\n");
-		goto err_hid_stop;
-	}
-
-	ret = ft260_hid_feature_report_get(hdev, FT260_CHIP_VERSION,
-					   (u8 *)&version, sizeof(version));
-	if (ret < 0) {
-		hid_err(hdev, "failed to retrieve chip version\n");
-		goto err_hid_close;
-	}
-
-	hid_info(hdev, "chip code: %02x%02x %02x%02x\n",
-		 version.chip_code[0], version.chip_code[1],
-		 version.chip_code[2], version.chip_code[3]);
-
-	ret = ft260_is_interface_enabled(hdev, &cfg);
-	if (ret <= 0)
-		goto err_hid_close;
-
-	hid_info(hdev, "USB HID v%x.%02x Device [%s] on %s\n",
-		hdev->version >> 8, hdev->version & 0xff, hdev->name,
-		hdev->phys);
-
+	struct gpio_chip *chip;
+	
 	hid_set_drvdata(hdev, dev);
 	dev->hdev = hdev;
 	dev->adap.owner = THIS_MODULE;
@@ -1497,7 +1454,7 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	ret = i2c_add_adapter(&dev->adap);
 	if (ret) {
 		hid_err(hdev, "failed to add i2c adapter\n");
-		goto err_hid_close;
+		return -1;
 	}
 
 	ret = sysfs_create_group(&hdev->dev.kobj, &ft260_attr_group);
@@ -1512,36 +1469,36 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	hid_info(hdev, "initialize gpio chip\n");
 
-	if (cfg.chip_mode) {
-		if (!(cfg.chip_mode & FT260_MODE_UART))
+	if (cfg->chip_mode) {
+		if (!(cfg->chip_mode & FT260_MODE_UART))
 			dev->gpio_en |= FT260_GPIO_UART_DEFAULT;
 
-		if (!(cfg.chip_mode & FT260_MODE_I2C))
+		if (!(cfg->chip_mode & FT260_MODE_I2C))
 			dev->gpio_en |= FT260_GPIO_I2C_DEFAULT;
 	}
 
-	if (cfg.i2c_enable == FT260_I2C_DISABLE)
+	if (cfg->i2c_enable == FT260_I2C_DISABLE)
 		dev->gpio_en |= FT260_GPIO_I2C_DEFAULT;
 	else
 		dev->gpio_en &= ~FT260_GPIO_I2C_DEFAULT;
 	
-	if (cfg.uart_mode == FT260_UART_MODE_OFF)
+	if (cfg->uart_mode == FT260_UART_MODE_OFF)
 		dev->gpio_en |= FT260_GPIO_UART_DEFAULT;
 	else
 		dev->gpio_en &= ~FT260_GPIO_UART_DEFAULT;
 
-	if (cfg.gpio2_func == FT260_MFPIN_GPIO)
+	if (cfg->gpio2_func == FT260_MFPIN_GPIO)
 		dev->gpio_en |= FT260_GPIO_2;
 
-	if (cfg.enable_wakeup_int == FT260_WAKEUP_INTERUP_DISABLE)
+	if (cfg->enable_wakeup_int == FT260_WAKEUP_INTERUP_DISABLE)
 		dev->gpio_en |= FT260_GPIO_3;
 	else
 		dev->gpio_en &= ~FT260_GPIO_3;
 
-	if (cfg.gpioa_func == FT260_MFPIN_GPIO)
+	if (cfg->gpioa_func == FT260_MFPIN_GPIO)
 		dev->gpio_en |= FT260_GPIO_A;
 
-	if (cfg.gpiog_func == FT260_MFPIN_GPIO)
+	if (cfg->gpiog_func == FT260_MFPIN_GPIO)
 		dev->gpio_en |= FT260_GPIO_G;
 
 	hid_info(hdev, "enabled GPIOs: %04x\n", dev->gpio_en);
@@ -1573,6 +1530,80 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 err_i2c_free:
 	i2c_del_adapter(&dev->adap);
+	return -1;
+}
+
+static int ft260_uart_probe(struct hid_device *hdev, struct ft260_device *dev){
+	return 0;
+}
+
+static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
+{
+	struct ft260_device *dev;
+	struct ft260_get_chip_version_report version;
+	struct ft260_get_system_status_report cfg;
+	int ret;
+
+	if (!hid_is_usb(hdev))
+		return -EINVAL;
+
+	dev = devm_kzalloc(&hdev->dev, sizeof(*dev), GFP_KERNEL);
+	if (!dev)
+		return -ENOMEM;
+
+	ret = hid_parse(hdev);
+	if (ret) {
+		hid_err(hdev, "failed to parse HID\n");
+		return ret;
+	}
+
+	ret = hid_hw_start(hdev, 0);
+	if (ret) {
+		hid_err(hdev, "failed to start HID HW\n");
+		return ret;
+	}
+
+	ret = hid_hw_open(hdev);
+	if (ret) {
+		hid_err(hdev, "failed to open HID HW\n");
+		goto err_hid_stop;
+	}
+	
+	hid_info(hdev, "USB HID v%x.%02x Device [%s] on %s\n",
+		hdev->version >> 8, hdev->version & 0xff, hdev->name,
+		hdev->phys);
+		
+	ret = ft260_hid_feature_report_get(hdev, FT260_CHIP_VERSION,
+					   (u8 *)&version, sizeof(version));	
+	if (ret < 0) {
+		hid_err(hdev, "failed to retrieve chip version\n");
+		goto err_hid_close;
+	}
+					
+	hid_info(hdev, "chip code: %02x%02x %02x%02x\n",
+		 version.chip_code[0], version.chip_code[1],
+		 version.chip_code[2], version.chip_code[3]);
+
+
+	ret = ft260_is_interface_enabled(hdev, &cfg);
+	if (ret < 0)
+		goto err_hid_close;
+		
+	if (ret==1){
+		// I2C interface
+		ret =ft260_i2c_probe(hdev, dev, &cfg);
+		if (ret)
+			goto err_hid_close;
+		
+	}else if (ret==0){ 
+		// interface is UART, just let it open
+		ret = ft260_uart_probe(hdev, dev);
+		if (ret)
+			goto err_hid_close;
+	}
+	
+	return 0;
+
 err_hid_close:
 	hid_hw_close(hdev);
 err_hid_stop:
@@ -1619,8 +1650,13 @@ static int ft260_raw_event(struct hid_device *hdev, struct hid_report *report,
 		if (dev->read_idx == dev->read_len)
 			complete(&dev->wait);
 
+	} else if (xfer->report >= FT260_UART_INTERRUPT_STATUS) {
+		ft260_dbg("Interrupt !\n");
+
+
 	} else {
 		hid_err(hdev, "unhandled report %#02x\n", xfer->report);
+		
 	}
 	return 0;
 }
