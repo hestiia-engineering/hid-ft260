@@ -1467,7 +1467,7 @@ static int ft260_i2c_probe(struct hid_device *hdev,
 		goto err_i2c_free;
 	}
 
-	chip = gpiochip_find(FT260_GPIOCHIP, ft260_gpio_chip_match_name);
+	chip = gpiochip_find(hdev->phys, ft260_gpio_chip_match_name);
 	if (chip)
 		return 0;
 
@@ -1515,7 +1515,7 @@ static int ft260_i2c_probe(struct hid_device *hdev,
 
 	hid_set_drvdata(hdev, dev);
 
-	dev->gc->label			= FT260_GPIOCHIP;
+	dev->gc->label			= hdev->phys;
 	dev->gc->direction_input	= ft260_gpio_direction_input;
 	dev->gc->direction_output	= ft260_gpio_direction_output;
 	dev->gc->get_direction		= ft260_gpio_get_direction;
