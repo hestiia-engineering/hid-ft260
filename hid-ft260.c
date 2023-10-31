@@ -1169,24 +1169,8 @@ static int ft260_is_interface_enabled(struct hid_device *hdev,
 	ft260_dbg("gpioA_func: 0x%02x\n", cfg->gpioa_func);
 	ft260_dbg("gpioG_func: 0x%02x\n", cfg->gpiog_func);
 	ft260_dbg("wakeup_int: 0x%02x\n", cfg->enable_wakeup_int);
-
-	switch (cfg->chip_mode) {
-	case FT260_MODE_ALL:
-	case FT260_MODE_BOTH:
-		if (interface == 1){
-			hid_info(hdev, "uart interface is not supported\n");
-			ret = 1;
-		} else
-			ret = 0;
-		break;
-	case FT260_MODE_UART:
-		hid_info(hdev, "uart interface is not supported\n");
-		ret = 1;
-		break;
-	case FT260_MODE_I2C:
-		ret = 0;
-		break;
-	}
+	
+	ret = interface;
 	return ret;
 }
 
@@ -1540,6 +1524,10 @@ err_i2c_free:
 static int ft260_uart_probe(struct hid_device *hdev, struct ft260_device *dev){
 	
 	int ret;
+
+	hid_info(hdev, "uart interface is not supported\n");
+	// Only manage interrupt
+	
 	dev->uio.name=hdev->phys;
 	dev->uio.version = "0.0.1";
 	dev->uio.irq=UIO_IRQ_CUSTOM;
@@ -1611,19 +1599,21 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	dev->hdev = hdev;
 	dev->adap.owner = THIS_MODULE;
 	
-	if (ret==0){
-		// I2C interface
+	switch(ret){
+	case FT260_INTERFACE_I2C:
 		ret =ft260_i2c_probe(hdev, dev, &cfg);
 		if (ret)
 			goto err_hid_close;
-		
-	}else if (ret==1){ 
-		// interface is UART, just let it open
+		break;
+	case FT260_INTERFACE_UART:
 		ret = ft260_uart_probe(hdev, dev);
 		if (ret)
 			goto err_hid_close;
-	}else
+		break;
+	default:
 		goto err_hid_close;
+		break;
+	}
 	
 	return 0;
 
