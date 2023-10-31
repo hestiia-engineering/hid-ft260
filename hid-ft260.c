@@ -16,8 +16,6 @@
 #include <linux/gpio/driver.h>
 #include <linux/uio_driver.h>
 
-#define DEBUG
-
 #ifdef DEBUG
 static int ft260_debug = 1;
 #else
@@ -208,6 +206,11 @@ enum {
 	FT260_WAKEUP_INTERUP_ENABLE = 1,
 };
 
+enum {
+	FT260_INTERFACE_I2C = 0,
+	FT260_INTERFACE_UART = 1,
+};
+
 #define FT260_SET_REQUEST_VALUE(report_id) ((FT260_FEATURE << 8) | (report_id))
 
 /* Feature In reports */
@@ -358,6 +361,7 @@ MODULE_DEVICE_TABLE(hid, ft260_devices);
 struct ft260_device {
 	struct i2c_adapter adap;
 	struct hid_device *hdev;
+	u8 interface;
 	struct completion wait;
 	struct gpio_chip *gc;
 	struct mutex lock;
@@ -370,6 +374,7 @@ struct ft260_device {
 	u16 clock;
 	struct ft260_gpio_state gpio;
 	u16 gpio_en;
+	struct uio_info uio;
 };
 
 static int ft260_hid_feature_report_get(struct hid_device *hdev,
@@ -1150,7 +1155,7 @@ static int ft260_is_interface_enabled(struct hid_device *hdev,
 	struct usb_interface *usbif = to_usb_interface(hdev->dev.parent);
 	int interface = usbif->cur_altsetting->desc.bInterfaceNumber;
 	int ret;
-
+	
 	ret = ft260_get_system_config(hdev, cfg);
 	if (ret < 0)
 		return ret;
@@ -1170,16 +1175,16 @@ static int ft260_is_interface_enabled(struct hid_device *hdev,
 	case FT260_MODE_BOTH:
 		if (interface == 1){
 			hid_info(hdev, "uart interface is not supported\n");
-			ret = 0;
-		} else
 			ret = 1;
+		} else
+			ret = 0;
 		break;
 	case FT260_MODE_UART:
 		hid_info(hdev, "uart interface is not supported\n");
-		ret = 0;
+		ret = 1;
 		break;
 	case FT260_MODE_I2C:
-		ret = 1;
+		ret = 0;
 		break;
 	}
 	return ret;
@@ -1428,14 +1433,13 @@ static const struct attribute_group ft260_attr_group = {
 	}
 };
 
-static int ft260_i2c_probe(struct hid_device *hdev, struct ft260_device *dev, struct ft260_get_system_status_report const *cfg){
+static int ft260_i2c_probe(struct hid_device *hdev, 
+	struct ft260_device *dev, 
+	struct ft260_get_system_status_report const *cfg){
 	
 	int ret;
 	struct gpio_chip *chip;
 	
-	hid_set_drvdata(hdev, dev);
-	dev->hdev = hdev;
-	dev->adap.owner = THIS_MODULE;
 	dev->adap.class = I2C_CLASS_HWMON;
 	dev->adap.algo = &ft260_i2c_algo;
 	dev->adap.quirks = &ft260_i2c_quirks;
@@ -1534,6 +1538,18 @@ err_i2c_free:
 }
 
 static int ft260_uart_probe(struct hid_device *hdev, struct ft260_device *dev){
+	
+	int ret;
+	dev->uio.name=hdev->phys;
+	dev->uio.version = "0.0.1";
+	dev->uio.irq=UIO_IRQ_CUSTOM;
+	
+	ret = uio_register_device(&hdev->dev, &dev->uio);	
+	if (ret){
+		hid_err(hdev, "failed to register uio\n");
+		return -1;
+	}
+	
 	return 0;
 }
 
@@ -1589,18 +1605,25 @@ static int ft260_probe(struct hid_device *hdev, const struct hid_device_id *id)
 	if (ret < 0)
 		goto err_hid_close;
 		
-	if (ret==1){
+	hid_set_drvdata(hdev, dev);
+	
+	dev->interface = ret;
+	dev->hdev = hdev;
+	dev->adap.owner = THIS_MODULE;
+	
+	if (ret==0){
 		// I2C interface
 		ret =ft260_i2c_probe(hdev, dev, &cfg);
 		if (ret)
 			goto err_hid_close;
 		
-	}else if (ret==0){ 
+	}else if (ret==1){ 
 		// interface is UART, just let it open
 		ret = ft260_uart_probe(hdev, dev);
 		if (ret)
 			goto err_hid_close;
-	}
+	}else
+		goto err_hid_close;
 	
 	return 0;
 
@@ -1616,10 +1639,14 @@ static void ft260_remove(struct hid_device *hdev)
 	struct ft260_device *dev = hid_get_drvdata(hdev);
 
 	if (!dev)
+	{
+		hid_err(hdev, "failed to retrieve dev\n");
 		return;
+	}
 
 	sysfs_remove_group(&hdev->dev.kobj, &ft260_attr_group);
 	i2c_del_adapter(&dev->adap);
+	uio_unregister_device(&dev->uio);
 
 	hid_hw_close(hdev);
 	hid_hw_stop(hdev);
@@ -1652,6 +1679,7 @@ static int ft260_raw_event(struct hid_device *hdev, struct hid_report *report,
 
 	} else if (xfer->report >= FT260_UART_INTERRUPT_STATUS) {
 		ft260_dbg("Interrupt !\n");
+		uio_event_notify(&dev->uio);
 
 
 	} else {
