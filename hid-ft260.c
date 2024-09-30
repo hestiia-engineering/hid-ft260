@@ -1942,7 +1942,7 @@ static int ft260_uart_get_icount(struct tty_struct *tty,
 }
 
 static void ft260_uart_set_termios(struct tty_struct *tty,
-		const struct ktermios *old_termios)
+		struct ktermios *old_termios)
 {
 	struct ft260_device *port = tty->driver_data;
 
