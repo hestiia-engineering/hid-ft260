@@ -151,3 +151,7 @@ $ sudo gpioset 0 2=0
 $ sudo gpioget 0 2
 0
 ```
+### Kernel Signing for Secure Boot :
+
+https://ubuntu.com/blog/how-to-sign-things-for-secure-boot
+https://wiki.ubuntu.com/UEFI/SecureBoot/Signing
