@@ -1694,7 +1694,7 @@ static void ft260_uart_port_put(struct ft260_device *port)
 
 static void ft260_uart_port_remove(struct ft260_device *port)
 {
-	timer_delete_sync(&port->wakeup_timer);
+	del_timer_sync(&port->wakeup_timer);
 
 	mutex_lock(&ft260_uart_list_lock);
 	list_del(&port->device_list);
