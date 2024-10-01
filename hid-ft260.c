@@ -2409,6 +2409,7 @@ static int ft260_raw_event(struct hid_device *hdev, struct hid_report *report,
 		ft260_dbg("uart interrupt: rep %#02x len %d\n", xfer->report,
 			  xfer->length);
 		uio_event_notify(&dev->uio);
+		return 0;
 	}
 	hid_err(hdev, "unhandled report %#02x\n", xfer->report);
 
