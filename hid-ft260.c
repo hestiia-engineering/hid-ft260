@@ -23,9 +23,6 @@
 #include <linux/gpio/driver.h>
 #include <linux/uio_driver.h>
 
-
-#define DEBUG
-
 #ifdef DEBUG
 static int ft260_debug = 1;
 #else
