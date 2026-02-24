@@ -1,3 +1,10 @@
+> [!WARNING]
+> **This fork is archived.** This is a fork of [Michael Zaidman's hid-ft260](https://github.com/MichaelZaidman/hid-ft260)
+> Linux kernel driver, with Hestiia-specific patches: a `hid_phys` sysfs attribute for FT260
+> identification, interrupt condition management, and GPIO enable fixes. It was a core component of
+> the M9/M10 devices, which relied extensively on the FT260 USB-to-I2C bridge. The MyEko Pro
+> hardware uses hardwired I2C/UART with no USB bridge, so this driver is no longer needed.
+
 # hid-ft260
 
 ## Overview
